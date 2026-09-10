@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#05070d">
+
+    <title>ARIA — Artificial Intelligence</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            min-height: 100vh;
+            background:
+                radial-gradient(circle at center, #111a2e 0%, #05070d 55%, #020307 100%);
+            color: #eaf7ff;
+            font-family: Arial, Helvetica, sans-serif;
+            overflow: hidden;
+        }
+
+        .app {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* HEADER */
+
+        header {
+            height: 70px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 25px;
+            border-bottom: 1px solid rgba(120, 200, 255, 0.15);
+            background: rgba(3, 7, 15, 0.65);
+            backdrop-filter: blur(15px);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 22px;
+            font-weight: bold;
+            letter-spacing: 4px;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: #9fb4c7;
+        }
+
+        .status-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: #38ff9c;
+            box-shadow: 0 0 15px #38ff9c;
+        }
+
+        /* MAIN */
+
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 30px 20px 20px;
+        }
+
+        .orb-container {
+            width: 260px;
+            height: 260px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+
+        .orb {
+            width: 155px;
+            height: 155px;
+            border-radius: 50%;
+            position: relative;
+            background:
+                radial-gradient(circle at 35% 30%, #ffffff 0%, #8deaff 7%, #197ea5 27%, #071526 65%, #02040a 100%);
+            box-shadow:
+                0 0 25px #25c9ff,
+                0 0 70px rgba(37, 201, 255, 0.5),
+                inset 0 0 35px rgba(120, 235, 255, 0.8);
+            animation: pulse 3s infinite ease-in-out;
+        }
+
+        .orb::before,
+        .orb::after {
+            content: "";
+            position: absolute;
+            inset: -20px;
+            border-radius: 50%;
+            border: 1px solid rgba(65, 214, 255, 0.4);
+        }
+
+        .orb::after {
+            inset: -38px;
+            border-color: rgba(65, 214, 255, 0.15);
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                transform: scale(1);
+                box-shadow:
+                    0 0 25px #25c9ff,
+                    0 0 70px rgba(37, 201, 255, 0.45),
+                    inset 0 0 35px rgba(120, 235, 255, 0.8);
+            }
+
+            50% {
+                transform: scale(1.07);
+                box-shadow:
+                    0 0 35px #25c9ff,
+                    0 0 100px rgba(37, 201, 255, 0.65),
+                    inset 0 0 45px rgba(120, 235, 255, 0.9);
+            }
+        }
+
+        .title {
+            font-size: 34px;
+            letter-spacing: 7px;
+            margin-bottom: 5px;
+        }
+
+        .subtitle {
+            color: #7e9bad;
+            font-size: 13px;
+            letter-spacing: 2px;
+            margin-bottom: 25px;
+        }
+
+        /* CHAT */
+
+        .chat {
+            width: min(850px, 100%);
+            height: 300px;
+            overflow-y: auto;
+            padding: 15px;
+            border: 1px solid rgba(105, 201, 255, 0.15);
+            border-radius: 15px;
+            background: rgba(4, 10, 20, 0.55);
+            backdrop-filter: blur(12px);
+        }
+
+        .message {
+            margin-bottom: 12px;
+            padding: 12px 15px;
+            border-radius: 12px;
+            line-height: 1.5;
+            font-size: 14px;
+        }
+
+        .aria {
+            background: rgba(27, 151, 195, 0.13);
+            border-left: 2px solid #35cfff;
+        }
+
+        .user {
+            background: rgba(255, 255, 255, 0.06);
+            border-left: 2px solid #9caec0;
+        }
+
+        .label {
+            display: block;
+            font-size: 10px;
+            letter-spacing: 2px;
+            margin-bottom: 5px;
+            color: #62d9ff;
+        }
+
+        /* CONTROLS */
+
+        .controls {
+            width: min(850px, 100%);
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        input {
+            flex: 1;
+            padding: 15px;
+            border-radius: 12px;
+            border: 1px solid rgba(105, 201, 255, 0.25);
+            outline: none;
+            background: rgba(5, 12, 24, 0.85);
+            color: white;
+            font-size: 14px;
+        }
+
+        input:focus {
+            border-color: #35cfff;
+            box-shadow: 0 0 15px rgba(53, 207, 255, 0.15);
+        }
+
+        button {
+            border: none;
+            border-radius: 12px;
+            padding: 0 20px;
+            cursor: pointer;
+            background: #0b7ea5;
+            color: white;
+            font-weight: bold;
+            transition: 0.2s;
+        }
+
+        button:hover {
+            background: #0da9db;
+            box-shadow: 0 0 20px rgba(13, 169, 219, 0.4);
+        }
+
+        .mic {
+            width: 55px;
+            padding: 0;
+            font-size: 20px;
+        }
+
+        footer {
+            padding: 12px;
+            text-align: center;
+            color: #526777;
+            font-size: 10px;
+            letter-spacing: 2px;
+        }
+
+        /* MOBILE */
+
+        @media (max-width: 600px) {
+
+            .title {
+                font-size: 27px;
+            }
+
+            .orb-container {
+                height: 210px;
+            }
+
+            .orb {
+                width: 125px;
+                height: 125px;
+            }
+
+            .chat {
+                height: 280px;
+            }
+
+            .controls button:not(.mic) {
+                padding: 0 14px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="app">
+
+    <header>
+        <div class="logo">
+            ◈ ARIA
+        </div>
+
+        <div class="status">
+            <span class="status-dot"></span>
+            SYSTEM ONLINE
+        </div>
+    </header>
+
+    <main>
+
+        <div class="orb-container">
+            <div class="orb"></div>
+        </div>
+
+        <h1 class="title">ARIA</h1>
+
+        <p class="subtitle">
+            ARTIFICIAL INTELLIGENCE &amp; RESPONSIVE ASSISTANT
+        </p>
+
+        <div class="chat" id="chat">
+
+            <div class="message aria">
+                <span class="label">ARIA</span>
+                Sistemas inicializados.
+                Estoy lista para recibir instrucciones.
+            </div>
+
+        </div>
+
+        <div class="controls">
+
+            <input
+                id="input"
+                type="text"
+                placeholder="Escribe una instrucción para ARIA..."
+                autocomplete="off"
+            >
+
+            <button class="mic" id="micButton" title="Activar micrófono">
+                🎙️
+            </button>
+
+            <button id="sendButton">
+                ENVIAR
+            </button>
+
+        </div>
+
+    </main>
+
+    <footer>
+        ARIA CORE • VERSION 0.1
+    </footer>
+
+</div>
+
+<script>
+
+    const input = document.getElementById("input");
+    const sendButton = document.getElementById("sendButton");
+    const micButton = document.getElementById("micButton");
+    const chat = document.getElementById("chat");
+
+    function addMessage(sender, text, type) {
+
+        const message = document.createElement("div");
+
+        message.className = "message " + type;
+
+        message.innerHTML = `
+            <span class="label">${sender}</span>
+            ${text}
+        `;
+
+        chat.appendChild(message);
+
+        chat.scrollTop = chat.scrollHeight;
+    }
+
+
+    function ariaResponse(command) {
+
+        const text = command.toLowerCase();
+
+        if (text.includes("hola")) {
+            return "Hola. Soy ARIA. Sistemas preparados.";
+        }
+
+        if (text.includes("quién eres") || text.includes("quien eres")) {
+            return "Soy ARIA, tu asistente de inteligencia artificial. Esta es mi primera versión.";
+        }
+
+        if (text.includes("hora")) {
+            return "La hora actual de tu dispositivo es " +
+                new Date().toLocaleTimeString();
+        }
+
+        if (text.includes("fecha")) {
+            return "La fecha actual es " +
+                new Date().toLocaleDateString();
+        }
+
+        if (text.includes("estado")) {
+            return "Todos los sistemas básicos de ARIA están operativos.";
+        }
+
+        return "He recibido tu instrucción: \"" +
+            command +
+            "\". Mi núcleo de inteligencia todavía está en construcción.";
+    }
+
+
+    function sendMessage() {
+
+        const command = input.value.trim();
+
+        if (!command) return;
+
+        addMessage("TÚ", command, "user");
+
+        input.value = "";
+
+        setTimeout(() => {
+
+            const response = ariaResponse(command);
+
+            addMessage("ARIA", response, "aria");
+
+            speak(response);
+
+        }, 500);
+    }
+
+
+    function speak(text) {
+
+        if ("speechSynthesis" in window) {
+
+            window.speechSynthesis.cancel();
+
+            const speech = new SpeechSynthesisUtterance(text);
+
+            speech.lang = "es-MX";
+            speech.rate = 1;
+            speech.pitch = 1;
+
+            window.speechSynthesis.speak(speech);
+        }
+    }
+
+
+    sendButton.addEventListener("click", sendMessage);
+
+
+    input.addEventListener("keydown", function(event) {
+
+        if (event.key === "Enter") {
+            sendMessage();
+        }
+
+    });
+
+
+    /* RECONOCIMIENTO DE VOZ */
+
+    const SpeechRecognition =
+        window.SpeechRecognition ||
+        window.webkitSpeechRecognition;
+
+    if (SpeechRecognition) {
+
+        const recognition = new SpeechRecognition();
+
+        recognition.lang = "es-MX";
+        recognition.continuous = false;
+        recognition.interimResults = false;
+
+        micButton.addEventListener("click", () => {
+
+            recognition.start();
+
+            micButton.textContent = "🔴";
+
+        });
+
+
+        recognition.onresult = function(event) {
+
+            const transcript =
+                event.results[0][0].transcript;
+
+            input.value = transcript;
+
+            micButton.textContent = "🎙️";
+
+            sendMessage();
+
+        };
+
+
+        recognition.onerror = function() {
+
+            micButton.textContent = "🎙️";
+
+        };
+
+
+        recognition.onend = function() {
+
+            micButton.textContent = "🎙️";
+
+        };
+
+    } else {
+
+        micButton.addEventListener("click", () => {
+
+            addMessage(
+                "ARIA",
+                "El reconocimiento de voz no está disponible en este navegador.",
+                "aria"
+            );
+
+        });
+
+    }
+
+</script>
+
+</body>
+  </html>
