@@ -13,7 +13,7 @@ const client = new OpenAI({
 });
 
 // =====================================================
-// POSTGRESQL — MEMORIA PERSISTENTE
+// POSTGRESQL
 // =====================================================
 
 const pool = new Pool({
@@ -24,7 +24,7 @@ const pool = new Pool({
 });
 
 // =====================================================
-// INICIALIZAR BASE DE DATOS
+// BASE DE DATOS
 // =====================================================
 
 async function initializeDatabase() {
@@ -41,12 +41,24 @@ async function initializeDatabase() {
             );
         `);
 
-        console.log("Memoria de ARIA inicializada correctamente.");
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS aria_facts (
+                id SERIAL PRIMARY KEY,
+                session_id VARCHAR(255) NOT NULL,
+                category VARCHAR(100) NOT NULL,
+                content TEXT NOT NULL,
+                importance INTEGER DEFAULT 5,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
+        console.log("Base de datos de ARIA inicializada.");
 
     } catch (error) {
 
         console.error(
-            "Error inicializando la memoria:",
+            "Error inicializando base de datos:",
             error
         );
 
@@ -54,10 +66,14 @@ async function initializeDatabase() {
 }
 
 // =====================================================
-// GUARDAR MEMORIA
+// MEMORIA CONVERSACIONAL
 // =====================================================
 
-async function saveMemory(sessionId, role, content) {
+async function saveMemory(
+    sessionId,
+    role,
+    content
+) {
 
     try {
 
@@ -77,16 +93,12 @@ async function saveMemory(sessionId, role, content) {
     } catch (error) {
 
         console.error(
-            "Error guardando memoria:",
+            "Error guardando conversación:",
             error
         );
 
     }
 }
-
-// =====================================================
-// RECUPERAR MEMORIA
-// =====================================================
 
 async function getMemory(sessionId) {
 
@@ -108,7 +120,7 @@ async function getMemory(sessionId) {
     } catch (error) {
 
         console.error(
-            "Error recuperando memoria:",
+            "Error recuperando conversación:",
             error
         );
 
@@ -117,287 +129,600 @@ async function getMemory(sessionId) {
 }
 
 // =====================================================
+// MEMORIA ESTRUCTURADA
+// =====================================================
+
+async function saveFact(
+    sessionId,
+    category,
+    content,
+    importance = 5
+) {
+
+    try {
+
+        await pool.query(
+            `
+            INSERT INTO aria_facts
+            (session_id, category, content, importance)
+            VALUES ($1, $2, $3, $4)
+            `,
+            [
+                sessionId,
+                category,
+                content,
+                importance
+            ]
+        );
+
+        return true;
+
+    } catch (error) {
+
+        console.error(
+            "Error guardando memoria estructurada:",
+            error
+        );
+
+        return false;
+    }
+}
+
+async function getFacts(sessionId) {
+
+    try {
+
+        const result = await pool.query(
+            `
+            SELECT
+                id,
+                category,
+                content,
+                importance
+            FROM aria_facts
+            WHERE session_id = $1
+            ORDER BY importance DESC, updated_at DESC
+            LIMIT 100
+            `,
+            [sessionId]
+        );
+
+        return result.rows;
+
+    } catch (error) {
+
+        console.error(
+            "Error recuperando memorias:",
+            error
+        );
+
+        return [];
+    }
+}
+
+async function deleteFacts(
+    sessionId,
+    searchText
+) {
+
+    try {
+
+        const result = await pool.query(
+            `
+            DELETE FROM aria_facts
+            WHERE session_id = $1
+            AND content ILIKE $2
+            `,
+            [
+                sessionId,
+                `%${searchText}%`
+            ]
+        );
+
+        return result.rowCount;
+
+    } catch (error) {
+
+        console.error(
+            "Error eliminando memoria:",
+            error
+        );
+
+        return 0;
+    }
+}
+
+// =====================================================
+// ANALIZAR SOLICITUD DE MEMORIA
+// =====================================================
+
+async function analyzeMemoryCommand(message) {
+
+    try {
+
+        const response =
+            await client.responses.create({
+
+                model: "gpt-5.6-luna",
+
+                instructions: `
+Analiza la instrucción del usuario.
+
+Determina si está solicitando una operación de memoria
+permanente.
+
+Responde ÚNICAMENTE con JSON válido.
+
+Formato:
+
+{
+    "action": "save" | "delete" | "none",
+    "category": "fact" | "preference" | "project" | "instruction" | "context",
+    "content": "texto breve de la memoria",
+    "importance": 1
+}
+
+Reglas:
+
+- "save" solamente cuando el usuario indique claramente
+  que quiere que ARIA recuerde algo.
+- "delete" cuando indique claramente que quiere olvidar algo.
+- "none" para conversación normal.
+- No conviertas preguntas normales en memorias.
+- No guardes contraseñas, API keys, tokens, datos bancarios
+  ni información extremadamente sensible.
+- importance debe ser un número del 1 al 10.
+                `,
+
+                input: message
+
+            });
+
+        let text =
+            response.output_text || "{}";
+
+        text = text
+            .replace(/```json/g, "")
+            .replace(/```/g, "")
+            .trim();
+
+        return JSON.parse(text);
+
+    } catch (error) {
+
+        console.error(
+            "Error analizando memoria:",
+            error
+        );
+
+        return {
+            action: "none"
+        };
+    }
+}
+
+// =====================================================
 // SERVIDOR
 // =====================================================
 
-const server = http.createServer(async (req, res) => {
+const server = http.createServer(
+    async (req, res) => {
 
-    // =================================================
-    // CORS
-    // =================================================
+        // =================================================
+        // CORS
+        // =================================================
 
-    res.setHeader(
-        "Access-Control-Allow-Origin",
-        "*"
-    );
-
-    res.setHeader(
-        "Access-Control-Allow-Methods",
-        "GET, POST, OPTIONS"
-    );
-
-    res.setHeader(
-        "Access-Control-Allow-Headers",
-        "Content-Type"
-    );
-
-    // =================================================
-    // PREFLIGHT
-    // =================================================
-
-    if (req.method === "OPTIONS") {
-
-        res.writeHead(204);
-        res.end();
-
-        return;
-    }
-
-    // =================================================
-    // ESTADO DEL SERVIDOR
-    // =================================================
-
-    if (
-        req.method === "GET" &&
-        req.url === "/"
-    ) {
-
-        res.writeHead(200, {
-            "Content-Type": "application/json"
-        });
-
-        res.end(
-            JSON.stringify({
-                status: "online",
-                assistant: "ARIA",
-                version: "0.3",
-                model: "gpt-5.6-luna",
-                memory: "persistent"
-            })
+        res.setHeader(
+            "Access-Control-Allow-Origin",
+            "*"
         );
 
-        return;
-    }
+        res.setHeader(
+            "Access-Control-Allow-Methods",
+            "GET, POST, OPTIONS"
+        );
 
-    // =================================================
-    // CHAT DE ARIA
-    // =================================================
+        res.setHeader(
+            "Access-Control-Allow-Headers",
+            "Content-Type"
+        );
 
-    if (
-        req.method === "POST" &&
-        req.url === "/api/chat"
-    ) {
+        // =================================================
+        // OPTIONS
+        // =================================================
 
-        let body = "";
+        if (req.method === "OPTIONS") {
 
-        req.on("data", chunk => {
+            res.writeHead(204);
+            res.end();
 
-            body += chunk;
+            return;
+        }
 
-        });
+        // =================================================
+        // ESTADO
+        // =================================================
 
-        req.on("end", async () => {
+        if (
+            req.method === "GET" &&
+            req.url === "/"
+        ) {
 
-            try {
+            res.writeHead(200, {
+                "Content-Type":
+                    "application/json"
+            });
 
-                const data = JSON.parse(body);
+            res.end(
+                JSON.stringify({
 
-                const message =
-                    data.message || "";
+                    status: "online",
 
-                // -----------------------------------------
-                // IDENTIFICADOR DE SESIÓN
-                // -----------------------------------------
+                    assistant: "ARIA",
 
-                const sessionId =
-                    data.sessionId ||
-                    "default-user";
+                    version: "0.3",
 
-                // -----------------------------------------
-                // VALIDAR MENSAJE
-                // -----------------------------------------
+                    model: "gpt-5.6-luna",
 
-                if (!message.trim()) {
+                    memory:
+                        "persistent + structured"
 
-                    res.writeHead(400, {
-                        "Content-Type":
-                            "application/json"
-                    });
+                })
+            );
 
-                    res.end(
-                        JSON.stringify({
-                            success: false,
-                            error: "Mensaje vacío"
-                        })
-                    );
+            return;
+        }
 
-                    return;
+        // =================================================
+        // CHAT
+        // =================================================
+
+        if (
+            req.method === "POST" &&
+            req.url === "/api/chat"
+        ) {
+
+            let body = "";
+
+            req.on(
+                "data",
+                chunk => {
+
+                    body += chunk;
+
                 }
+            );
 
-                console.log(
-                    "Mensaje recibido:",
-                    message
-                );
+            req.on(
+                "end",
+                async () => {
 
-                // -----------------------------------------
-                // RECUPERAR MEMORIA
-                // -----------------------------------------
+                    try {
 
-                const memory =
-                    await getMemory(sessionId);
+                        const data =
+                            JSON.parse(body);
 
-                // -----------------------------------------
-                // CONSTRUIR CONTEXTO
-                // -----------------------------------------
+                        const message =
+                            data.message || "";
 
-                const conversation = memory.map(
-                    item => ({
-                        role:
-                            item.role === "user"
-                                ? "user"
-                                : "assistant",
-                        content: item.content
-                    })
-                );
+                        const sessionId =
+                            data.sessionId ||
+                            "default-user";
 
-                conversation.push({
-                    role: "user",
-                    content: message
-                });
+                        // ---------------------------------
+                        // VALIDAR
+                        // ---------------------------------
 
-                // -----------------------------------------
-                // GUARDAR MENSAJE DEL USUARIO
-                // -----------------------------------------
+                        if (!message.trim()) {
 
-                await saveMemory(
-                    sessionId,
-                    "user",
-                    message
-                );
+                            res.writeHead(
+                                400,
+                                {
+                                    "Content-Type":
+                                        "application/json"
+                                }
+                            );
 
-                // -----------------------------------------
-                // MODELO
-                // -----------------------------------------
+                            res.end(
+                                JSON.stringify({
+                                    success: false,
+                                    error:
+                                        "Mensaje vacío"
+                                })
+                            );
 
-                const response =
-                    await client.responses.create({
+                            return;
+                        }
 
-                        model: "gpt-5.6-luna",
+                        console.log(
+                            "Mensaje:",
+                            message
+                        );
 
-                        instructions: `
-Eres ARIA, un asistente avanzado de inteligencia artificial.
+                        // ---------------------------------
+                        // ANALIZAR MEMORIA
+                        // ---------------------------------
 
-Tu objetivo es ayudar al usuario de forma clara,
-natural, inteligente y útil.
+                        const memoryCommand =
+                            await analyzeMemoryCommand(
+                                message
+                            );
 
-Responde siempre en español, salvo que el usuario
-solicite otro idioma.
+                        // ---------------------------------
+                        // GUARDAR MEMORIA
+                        // ---------------------------------
 
-Puedes explicar conceptos, analizar información,
-ayudar a programar y colaborar en la construcción
-del sistema ARIA.
+                        if (
+                            memoryCommand.action ===
+                            "save"
+                        ) {
 
-ARIA dispone de memoria persistente.
+                            await saveFact(
+                                sessionId,
+                                memoryCommand.category ||
+                                    "fact",
+                                memoryCommand.content ||
+                                    message,
+                                memoryCommand.importance ||
+                                    5
+                            );
 
-Utiliza el contexto de conversación proporcionado
-para mantener continuidad y coherencia.
+                            console.log(
+                                "Nueva memoria guardada."
+                            );
+                        }
+
+                        // ---------------------------------
+                        // BORRAR MEMORIA
+                        // ---------------------------------
+
+                        if (
+                            memoryCommand.action ===
+                            "delete"
+                        ) {
+
+                            if (
+                                memoryCommand.content
+                            ) {
+
+                                const deleted =
+                                    await deleteFacts(
+                                        sessionId,
+                                        memoryCommand.content
+                                    );
+
+                                console.log(
+                                    "Memorias eliminadas:",
+                                    deleted
+                                );
+                            }
+                        }
+
+                        // ---------------------------------
+                        // RECUPERAR CONVERSACIÓN
+                        // ---------------------------------
+
+                        const conversation =
+                            await getMemory(
+                                sessionId
+                            );
+
+                        // ---------------------------------
+                        // RECUPERAR MEMORIAS
+                        // ---------------------------------
+
+                        const facts =
+                            await getFacts(
+                                sessionId
+                            );
+
+                        // ---------------------------------
+                        // CONTEXTO DE MEMORIA
+                        // ---------------------------------
+
+                        let memoryContext =
+                            "No hay memorias permanentes.";
+
+                        if (facts.length > 0) {
+
+                            memoryContext =
+                                facts
+                                    .map(
+                                        fact =>
+                                            `[${fact.category}] ${fact.content}`
+                                    )
+                                    .join("\n");
+                        }
+
+                        // ---------------------------------
+                        // CONTEXTO CONVERSACIÓN
+                        // ---------------------------------
+
+                        const conversationInput =
+                            conversation.map(
+                                item => ({
+
+                                    role:
+                                        item.role ===
+                                        "user"
+                                            ? "user"
+                                            : "assistant",
+
+                                    content:
+                                        item.content
+
+                                })
+                            );
+
+                        conversationInput.push({
+
+                            role: "user",
+
+                            content: message
+
+                        });
+
+                        // ---------------------------------
+                        // RESPUESTA DE ARIA
+                        // ---------------------------------
+
+                        const response =
+                            await client.responses.create({
+
+                                model:
+                                    "gpt-5.6-luna",
+
+                                instructions: `
+
+Eres ARIA, un asistente avanzado
+de inteligencia artificial.
+
+Responde siempre en español,
+salvo que el usuario solicite otro idioma.
+
+Tu objetivo es ayudar al usuario de forma
+clara, natural, inteligente y útil.
+
+MEMORIA PERMANENTE DE ARIA:
+
+${memoryContext}
+
+Utiliza estas memorias cuando sean relevantes.
+
+Si una memoria no es relevante para la pregunta,
+ignórala.
 
 IMPORTANTE:
 
-No ejecutes acciones externas ni afirmes haberlas
-ejecutado si no existe una herramienta autorizada
-para hacerlo.
+No ejecutes acciones externas ni afirmes
+haberlas ejecutado si no existe una herramienta
+autorizada para hacerlo.
 
 Las acciones que puedan afectar sistemas,
-dispositivos, cuentas, archivos o servicios externos
-requieren autorización explícita del usuario.
+dispositivos, cuentas, archivos o servicios
+externos requieren autorización explícita
+del usuario.
 
 Sé precisa, transparente y no inventes resultados.
-                        `,
 
-                        input: conversation
+Si el usuario acaba de pedir que recuerdes algo
+y la memoria fue guardada correctamente,
+confirma brevemente que quedó guardado.
 
-                    });
+Si el usuario pide olvidar algo y fue eliminado,
+confirma brevemente que fue eliminado.
 
-                const reply =
-                    response.output_text ||
-                    "No pude generar una respuesta.";
+                                `,
 
-                console.log(
-                    "Respuesta de ARIA:",
-                    reply
-                );
+                                input:
+                                    conversationInput
 
-                // -----------------------------------------
-                // GUARDAR RESPUESTA
-                // -----------------------------------------
+                            });
 
-                await saveMemory(
-                    sessionId,
-                    "assistant",
-                    reply
-                );
+                        const reply =
+                            response.output_text ||
+                            "No pude generar una respuesta.";
 
-                // -----------------------------------------
-                // RESPUESTA
-                // -----------------------------------------
+                        // ---------------------------------
+                        // GUARDAR CONVERSACIÓN
+                        // ---------------------------------
 
-                res.writeHead(200, {
-                    "Content-Type":
-                        "application/json"
-                });
+                        await saveMemory(
+                            sessionId,
+                            "user",
+                            message
+                        );
 
-                res.end(
-                    JSON.stringify({
-                        success: true,
-                        reply: reply
-                    })
-                );
+                        await saveMemory(
+                            sessionId,
+                            "assistant",
+                            reply
+                        );
 
-            } catch (error) {
+                        console.log(
+                            "Respuesta:",
+                            reply
+                        );
 
-                console.error(
-                    "ERROR ARIA:",
-                    error
-                );
+                        // ---------------------------------
+                        // RESPUESTA HTTP
+                        // ---------------------------------
 
-                res.writeHead(500, {
-                    "Content-Type":
-                        "application/json"
-                });
+                        res.writeHead(
+                            200,
+                            {
+                                "Content-Type":
+                                    "application/json"
+                            }
+                        );
 
-                res.end(
-                    JSON.stringify({
-                        success: false,
-                        error:
-                            "Error comunicando con el modelo de IA"
-                    })
-                );
+                        res.end(
+                            JSON.stringify({
+
+                                success: true,
+
+                                reply: reply
+
+                            })
+                        );
+
+                    } catch (error) {
+
+                        console.error(
+                            "ERROR ARIA:",
+                            error
+                        );
+
+                        res.writeHead(
+                            500,
+                            {
+                                "Content-Type":
+                                    "application/json"
+                            }
+                        );
+
+                        res.end(
+                            JSON.stringify({
+
+                                success: false,
+
+                                error:
+                                    "Error comunicando con el modelo de IA"
+
+                            })
+                        );
+                    }
+
+                }
+            );
+
+            return;
+        }
+
+        // =================================================
+        // 404
+        // =================================================
+
+        res.writeHead(
+            404,
+            {
+                "Content-Type":
+                    "application/json"
             }
+        );
 
-        });
+        res.end(
+            JSON.stringify({
+                error:
+                    "Ruta no encontrada"
+            })
+        );
 
-        return;
     }
-
-    // =================================================
-    // RUTA INEXISTENTE
-    // =================================================
-
-    res.writeHead(404, {
-        "Content-Type":
-            "application/json"
-    });
-
-    res.end(
-        JSON.stringify({
-            error: "Ruta no encontrada"
-        })
-    );
-});
+);
 
 // =====================================================
-// INICIAR SERVIDOR
+// INICIAR
 // =====================================================
 
 async function startServer() {
