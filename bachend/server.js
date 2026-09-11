@@ -1,25 +1,20 @@
 const http = require("http");
 const OpenAI = require("openai");
 const { Pool } = require("pg");
+
 const PORT = process.env.PORT || 3000;
-// =====================================================
-// OPENAI
-// =====================================================
+
 const client = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
 });
-// =====================================================
-// POSTGRESQL
-// =====================================================
+
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: {
         rejectUnauthorized: false
     }
 });
-// =====================================================
-// BASE DE DATOS
-// =====================================================
+
 async function initializeDatabase() {
     try {
         await pool.query(`
@@ -31,6 +26,7 @@ async function initializeDatabase() {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
+
         await pool.query(`
             CREATE TABLE IF NOT EXISTS aria_facts (
                 id SERIAL PRIMARY KEY,
@@ -42,7 +38,21 @@ async function initializeDatabase() {
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS aria_deleted_facts (
+                id SERIAL PRIMARY KEY,
+                original_id INTEGER,
+                session_id VARCHAR(255) NOT NULL,
+                category VARCHAR(100) NOT NULL,
+                content TEXT NOT NULL,
+                importance INTEGER DEFAULT 5,
+                deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
         console.log("Base de datos de ARIA inicializada.");
+
     } catch (error) {
         console.error(
             "Error inicializando base de datos:",
@@ -50,14 +60,8 @@ async function initializeDatabase() {
         );
     }
 }
-// =====================================================
-// MEMORIA CONVERSACIONAL
-// =====================================================
-async function saveMemory(
-    sessionId,
-    role,
-    content
-) {
+
+async function saveMemory(sessionId, role, content) {
     try {
         await pool.query(
             `
@@ -71,6 +75,7 @@ async function saveMemory(
                 content
             ]
         );
+
     } catch (error) {
         console.error(
             "Error guardando conversación:",
@@ -78,6 +83,7 @@ async function saveMemory(
         );
     }
 }
+
 async function getMemory(sessionId) {
     try {
         const result = await pool.query(
@@ -90,18 +96,19 @@ async function getMemory(sessionId) {
             `,
             [sessionId]
         );
+
         return result.rows;
+
     } catch (error) {
         console.error(
             "Error recuperando conversación:",
             error
         );
+
         return [];
     }
 }
-// =====================================================
-// MEMORIA ESTRUCTURADA
-// =====================================================
+
 async function saveFact(
     sessionId,
     category,
@@ -129,15 +136,19 @@ async function saveFact(
                 importance
             ]
         );
+
         return result.rows[0].id;
+
     } catch (error) {
         console.error(
             "Error guardando memoria estructurada:",
             error
         );
+
         return null;
     }
 }
+
 async function getFacts(sessionId) {
     try {
         const result = await pool.query(
@@ -156,29 +167,38 @@ async function getFacts(sessionId) {
             `,
             [sessionId]
         );
+
         return result.rows;
+
     } catch (error) {
         console.error(
             "Error recuperando memorias:",
             error
         );
+
         return [];
     }
 }
-// =====================================================
-// ELIMINAR MEMORIAS POR ID
-// =====================================================
-async function deleteFactsByIds(
+
+/*
+=================================================
+ARCHIVAR MEMORIA ANTES DE ELIMINARLA
+=================================================
+*/
+
+async function archiveFactsByIds(
     sessionId,
     ids
 ) {
     try {
+
         if (
             !Array.isArray(ids) ||
             ids.length === 0
         ) {
             return 0;
         }
+
         const cleanIds = ids
             .map(id => Number(id))
             .filter(
@@ -186,9 +206,101 @@ async function deleteFactsByIds(
                     Number.isInteger(id) &&
                     id > 0
             );
+
         if (cleanIds.length === 0) {
             return 0;
         }
+
+        const result = await pool.query(
+            `
+            INSERT INTO aria_deleted_facts
+            (
+                original_id,
+                session_id,
+                category,
+                content,
+                importance
+            )
+            SELECT
+                id,
+                session_id,
+                category,
+                content,
+                importance
+            FROM aria_facts
+            WHERE session_id = $1
+            AND id = ANY($2::int[])
+            RETURNING id
+            `,
+            [
+                sessionId,
+                cleanIds
+            ]
+        );
+
+        return result.rowCount;
+
+    } catch (error) {
+
+        console.error(
+            "Error archivando memorias:",
+            error
+        );
+
+        return 0;
+    }
+}
+
+/*
+=================================================
+ELIMINAR MEMORIAS POR ID
+=================================================
+*/
+
+async function deleteFactsByIds(
+    sessionId,
+    ids
+) {
+    try {
+
+        if (
+            !Array.isArray(ids) ||
+            ids.length === 0
+        ) {
+            return 0;
+        }
+
+        const cleanIds = ids
+            .map(id => Number(id))
+            .filter(
+                id =>
+                    Number.isInteger(id) &&
+                    id > 0
+            );
+
+        if (cleanIds.length === 0) {
+            return 0;
+        }
+
+        /*
+        Primero archivamos.
+        */
+
+        const archived =
+            await archiveFactsByIds(
+                sessionId,
+                cleanIds
+            );
+
+        if (archived === 0) {
+            return 0;
+        }
+
+        /*
+        Después eliminamos de las
+        memorias activas.
+        */
+
         const result =
             await pool.query(
                 `
@@ -201,22 +313,87 @@ async function deleteFactsByIds(
                     cleanIds
                 ]
             );
+
         return result.rowCount;
+
     } catch (error) {
+
         console.error(
             "Error eliminando memorias por ID:",
             error
         );
+
         return 0;
     }
 }
-// =====================================================
-// ELIMINAR TODAS LAS MEMORIAS
-// =====================================================
+
+/*
+=================================================
+ARCHIVAR TODAS LAS MEMORIAS
+=================================================
+*/
+
+async function archiveAllFacts(
+    sessionId
+) {
+    try {
+
+        const result = await pool.query(
+            `
+            INSERT INTO aria_deleted_facts
+            (
+                original_id,
+                session_id,
+                category,
+                content,
+                importance
+            )
+            SELECT
+                id,
+                session_id,
+                category,
+                content,
+                importance
+            FROM aria_facts
+            WHERE session_id = $1
+            RETURNING id
+            `,
+            [sessionId]
+        );
+
+        return result.rowCount;
+
+    } catch (error) {
+
+        console.error(
+            "Error archivando todas las memorias:",
+            error
+        );
+
+        return 0;
+    }
+}
+
+/*
+=================================================
+ELIMINAR TODAS LAS MEMORIAS ACTIVAS
+=================================================
+*/
+
 async function deleteAllFacts(
     sessionId
 ) {
     try {
+
+        const archived =
+            await archiveAllFacts(
+                sessionId
+            );
+
+        if (archived === 0) {
+            return 0;
+        }
+
         const result =
             await pool.query(
                 `
@@ -225,23 +402,32 @@ async function deleteAllFacts(
                 `,
                 [sessionId]
             );
+
         return result.rowCount;
+
     } catch (error) {
+
         console.error(
             "Error eliminando todas las memorias:",
             error
         );
+
         return 0;
     }
 }
-// =====================================================
-// ANALIZAR MEMORIA
-// =====================================================
+
+/*
+=================================================
+ANALIZADOR DE MEMORIA
+=================================================
+*/
+
 async function analyzeMemoryCommand(
     message,
     facts
 ) {
     try {
+
         const memoryList =
             facts.length > 0
                 ? facts
@@ -251,19 +437,28 @@ async function analyzeMemoryCommand(
                     )
                     .join("\n")
                 : "NO HAY MEMORIAS PERMANENTES.";
+
         const response =
             await client.responses.create({
+
                 model: "gpt-5.6-luna",
+
                 instructions: `
+
 Eres el sistema de gestión de memoria de ARIA.
+
 Tu única tarea es determinar si el usuario quiere:
+
 1. GUARDAR una memoria.
 2. ELIMINAR una memoria.
 3. ELIMINAR TODAS las memorias.
 4. CONSULTAR qué memorias existen.
 5. NO HACER NADA.
+
 RESPONDE ÚNICAMENTE CON JSON VÁLIDO.
+
 FORMATO:
+
 {
     "action": "save" | "delete" | "delete_all" | "list" | "none",
     "category": "fact" | "preference" | "project" | "instruction" | "context",
@@ -271,129 +466,187 @@ FORMATO:
     "importance": 1,
     "deleteIds": []
 }
+
 REGLAS PARA GUARDAR:
+
 Solo usa "save" si el usuario pide explícitamente
 recordar, guardar, almacenar o memorizar algo.
+
 Ejemplos:
+
 "Recuerda que mi proyecto se llama ARIA."
+
 "Guarda que prefiero respuestas cortas."
+
 "Quiero que recuerdes que trabajo en X."
+
 REGLAS PARA ELIMINAR:
-Usa "delete" si el usuario pide olvidar,
-borrar o eliminar una memoria concreta.
+
+Usa "delete" si el usuario pide explícitamente
+olvidar, borrar o eliminar una memoria concreta.
+
 Ejemplos:
+
 "Olvida mi nombre."
+
 "Olvida el nombre de mi proyecto."
+
 "Borra esa memoria."
+
 "No recuerdes que mi proyecto se llama FÉNIX."
+
 IMPORTANTE:
+
 Debes comparar la intención del usuario con las
 memorias existentes.
+
 NO es necesario que las palabras sean idénticas.
+
 Ejemplo:
+
 Memoria existente:
+
 ID: 25
 Categoría: project
 Contenido: Mi proyecto de prueba se llama FÉNIX.
+
 Usuario:
+
 "Olvida el nombre de mi proyecto de prueba."
+
 Debes devolver:
+
 {
     "action": "delete",
     "deleteIds": [25]
 }
+
 REGLAS PARA ELIMINAR TODO:
+
 Usa "delete_all" cuando el usuario diga claramente:
+
 "Olvida todo."
+
 "Borra todas mis memorias."
+
 "Elimina todo lo que recuerdas de mí."
+
 "Quiero que olvides todo."
+
 REGLAS PARA CONSULTAR:
+
 Usa "list" cuando el usuario pregunte:
+
 "¿Qué recuerdas de mí?"
+
 "¿Qué memorias tienes?"
+
 "¿Qué sabes de mí?"
+
 No conviertas una pregunta normal en una memoria.
+
 Nunca guardes:
+
 - contraseñas
 - API keys
 - tokens
 - datos bancarios
 - información extremadamente sensible
+
 importance debe ser un número del 1 al 10.
+
 Si no existe ninguna memoria relacionada con una
 solicitud de eliminación concreta:
+
 "deleteIds": []
+
 Si action es "save", deleteIds debe ser [].
+
 Si action es "list", deleteIds debe ser [].
+
 Si action es "none", deleteIds debe ser [].
+
 MEMORIAS EXISTENTES:
+
 ${memoryList}
+
                 `,
+
                 input: message
             });
+
         let text =
             response.output_text || "{}";
+
         text = text
             .replace(/```json/g, "")
             .replace(/```/g, "")
             .trim();
+
         const command =
             JSON.parse(text);
+
         if (
             !Array.isArray(command.deleteIds)
         ) {
             command.deleteIds = [];
         }
+
         return command;
+
     } catch (error) {
+
         console.error(
             "Error analizando memoria:",
             error
         );
+
         return {
             action: "none",
             deleteIds: []
         };
     }
 }
-// =====================================================
-// SERVIDOR
-// =====================================================
+
+/*
+=================================================
+SERVIDOR
+=================================================
+*/
+
 const server = http.createServer(
     async (req, res) => {
-        // =================================================
-        // CORS
-        // =================================================
+
         res.setHeader(
             "Access-Control-Allow-Origin",
             "*"
         );
+
         res.setHeader(
             "Access-Control-Allow-Methods",
             "GET, POST, OPTIONS"
         );
+
         res.setHeader(
             "Access-Control-Allow-Headers",
             "Content-Type"
         );
-        // =================================================
-        // OPTIONS
-        // =================================================
+
         if (
             req.method === "OPTIONS"
         ) {
+
             res.writeHead(204);
             res.end();
+
             return;
         }
-        // =================================================
-        // ESTADO DEL SERVIDOR
-        // =================================================
+
         if (
             req.method === "GET" &&
             req.url === "/"
         ) {
+
             res.writeHead(
                 200,
                 {
@@ -401,56 +654,74 @@ const server = http.createServer(
                         "application/json"
                 }
             );
+
             res.end(
                 JSON.stringify({
+
                     status: "online",
+
                     assistant: "ARIA",
-                    version: "0.5",
+
+                    version: "0.6",
+
                     model:
                         "gpt-5.6-luna",
+
                     memory:
                         "persistent + structured",
+
                     memoryDelete:
                         "enabled",
+
                     memoryList:
                         "enabled",
+
                     memoryDeleteAll:
-                        "enabled"
+                        "enabled",
+
+                    memoryRecovery:
+                        "archived"
+
                 })
             );
+
             return;
         }
-        // =================================================
-        // API CHAT
-        // =================================================
+
         if (
             req.method === "POST" &&
             req.url === "/api/chat"
         ) {
+
             let body = "";
+
             req.on(
                 "data",
                 chunk => {
                     body += chunk;
                 }
             );
+
             req.on(
                 "end",
                 async () => {
+
                     try {
+
                         const data =
                             JSON.parse(body);
+
                         const message =
                             data.message || "";
+
                         const sessionId =
                             data.sessionId ||
                             "default-user";
-                        // ---------------------------------
-                        // VALIDAR MENSAJE
-                        // ---------------------------------
+
                         if (
                             !message.trim()
                         ) {
+
                             res.writeHead(
                                 400,
                                 {
@@ -458,129 +729,138 @@ const server = http.createServer(
                                         "application/json"
                                 }
                             );
+
                             res.end(
                                 JSON.stringify({
+
                                     success: false,
+
                                     error:
                                         "Mensaje vacío"
+
                                 })
                             );
+
                             return;
                         }
+
                         console.log(
                             "Mensaje:",
                             message
                         );
-                        // ---------------------------------
-                        // OBTENER MEMORIAS
-                        // ---------------------------------
+
                         const existingFacts =
                             await getFacts(
                                 sessionId
                             );
-                        // ---------------------------------
-                        // ANALIZAR MEMORIA
-                        // ---------------------------------
+
                         const memoryCommand =
                             await analyzeMemoryCommand(
                                 message,
                                 existingFacts
                             );
+
                         console.log(
                             "Comando de memoria:",
                             memoryCommand
                         );
-                        // ---------------------------------
-                        // RESULTADOS DE MEMORIA
-                        // ---------------------------------
+
                         let memorySaved =
                             false;
+
                         let memoriesDeleted =
                             0;
+
                         let memoryAction =
                             "none";
-                        // ---------------------------------
-                        // GUARDAR
-                        // ---------------------------------
+
                         if (
                             memoryCommand.action ===
                             "save"
                         ) {
+
                             const savedId =
                                 await saveFact(
                                     sessionId,
+
                                     memoryCommand.category ||
                                         "fact",
+
                                     memoryCommand.content ||
                                         message,
+
                                     memoryCommand.importance ||
                                         5
                                 );
+
                             memorySaved =
                                 savedId !== null;
+
                             memoryAction =
                                 "save";
+
                             console.log(
                                 "Memoria guardada:",
                                 savedId
                             );
                         }
-                        // ---------------------------------
-                        // ELIMINAR MEMORIA CONCRETA
-                        // ---------------------------------
+
                         if (
                             memoryCommand.action ===
                             "delete"
                         ) {
+
                             memoriesDeleted =
                                 await deleteFactsByIds(
                                     sessionId,
                                     memoryCommand.deleteIds
                                 );
+
                             memoryAction =
                                 "delete";
+
                             console.log(
                                 "IDs para eliminar:",
                                 memoryCommand.deleteIds
                             );
+
                             console.log(
-                                "Memorias eliminadas:",
+                                "Memorias archivadas y eliminadas:",
                                 memoriesDeleted
                             );
                         }
-                        // ---------------------------------
-                        // ELIMINAR TODAS
-                        // ---------------------------------
+
                         if (
                             memoryCommand.action ===
                             "delete_all"
                         ) {
+
                             memoriesDeleted =
                                 await deleteAllFacts(
                                     sessionId
                                 );
+
                             memoryAction =
                                 "delete_all";
+
                             console.log(
-                                "Todas las memorias eliminadas:",
+                                "Memorias archivadas y eliminadas:",
                                 memoriesDeleted
                             );
                         }
-                        // ---------------------------------
-                        // MEMORIAS ACTUALIZADAS
-                        // ---------------------------------
+
                         const facts =
                             await getFacts(
                                 sessionId
                             );
-                        // ---------------------------------
-                        // CONTEXTO DE MEMORIA
-                        // ---------------------------------
+
                         let memoryContext =
                             "No hay memorias permanentes.";
+
                         if (
                             facts.length > 0
                         ) {
+
                             memoryContext =
                                 facts
                                     .map(
@@ -589,141 +869,190 @@ const server = http.createServer(
                                     )
                                     .join("\n");
                         }
-                        // ---------------------------------
-                        // CONSULTA DE MEMORIAS
-                        // ---------------------------------
+
                         let memoryInstruction = "";
+
                         if (
                             memoryCommand.action ===
                             "list"
                         ) {
+
                             memoryInstruction = `
+
 El usuario está preguntando qué memorias
 permanentes tienes sobre él.
+
 Estas son las memorias actuales:
+
 ${memoryContext}
+
 Muéstralas de forma clara y natural.
+
 Si no existen memorias, dilo claramente.
+
 `;
                         }
-                        // ---------------------------------
-                        // RESPUESTA CONVERSACIONAL
-                        // ---------------------------------
+
                         const conversation =
                             await getMemory(
                                 sessionId
                             );
+
                         const conversationInput =
                             conversation.map(
                                 item => ({
+
                                     role:
                                         item.role ===
                                         "user"
                                             ? "user"
                                             : "assistant",
+
                                     content:
                                         item.content
+
                                 })
                             );
+
                         conversationInput.push({
+
                             role: "user",
+
                             content: message
+
                         });
-                        // ---------------------------------
-                        // RESPUESTA DE ARIA
-                        // ---------------------------------
+
                         const response =
                             await client.responses.create({
+
                                 model:
                                     "gpt-5.6-luna",
+
                                 instructions: `
+
 Eres ARIA, un asistente avanzado
 de inteligencia artificial.
+
 Responde siempre en español,
 salvo que el usuario solicite otro idioma.
+
 Tu objetivo es ayudar al usuario de forma
 clara, natural, inteligente y útil.
+
 =================================================
 MEMORIA PERMANENTE ACTUAL
 =================================================
+
 ${memoryContext}
+
 Utiliza las memorias solamente cuando sean
 relevantes.
+
 Si no son relevantes, ignóralas.
+
 =================================================
 ESTADO DE LA OPERACIÓN DE MEMORIA
 =================================================
+
 Acción detectada:
+
 ${memoryAction}
+
 Memoria guardada:
+
 ${memorySaved}
+
 Memorias eliminadas:
+
 ${memoriesDeleted}
+
 =================================================
 REGLAS DE MEMORIA
 =================================================
+
 ARIA SÍ TIENE capacidad para gestionar memorias
 permanentes mediante el backend.
+
+Las memorias eliminadas se conservan en un archivo
+interno de recuperación.
+
+No digas que una memoria fue destruida
+definitivamente cuando fue archivada.
+
 No digas que no puedes eliminar memorias.
-No digas que necesitas una función adicional
-para eliminar memorias.
+
 Si se guardó una memoria correctamente,
 confirma brevemente que quedó guardada.
+
 Si se eliminó una o más memorias correctamente,
 confirma brevemente que fueron eliminadas.
+
 Si se solicitó eliminar una memoria pero
 memoriesDeleted es 0, indica que no se encontró
 una memoria permanente relacionada.
+
 Si el usuario solicitó eliminar todo y se eliminaron
 memorias, confirma cuántas fueron eliminadas.
+
 Si no había memorias para eliminar, dilo claramente.
+
 Nunca inventes una operación de memoria.
+
 ${memoryInstruction}
+
 =================================================
 SEGURIDAD
 =================================================
+
 No ejecutes acciones externas ni afirmes haberlas
 ejecutado si no existe una herramienta autorizada
 para hacerlo.
+
 Las acciones que puedan afectar sistemas,
 dispositivos, cuentas, archivos o servicios
 externos requieren autorización explícita
 del usuario.
+
 Sé precisa, transparente y no inventes resultados.
+
 =================================================
 CONVERSACIÓN
 =================================================
-Responde de manera natural.
+
+Responde de manera natural y clara.
+
 No expliques el funcionamiento interno de PostgreSQL,
 el backend o el sistema de IDs salvo que el usuario
 lo pregunte específicamente.
+
                                 `,
+
                                 input:
                                     conversationInput
+
                             });
+
                         const reply =
                             response.output_text ||
                             "No pude generar una respuesta.";
-                        // ---------------------------------
-                        // GUARDAR CONVERSACIÓN
-                        // ---------------------------------
+
                         await saveMemory(
                             sessionId,
                             "user",
                             message
                         );
+
                         await saveMemory(
                             sessionId,
                             "assistant",
                             reply
                         );
+
                         console.log(
                             "Respuesta:",
                             reply
                         );
-                        // ---------------------------------
-                        // RESPUESTA HTTP
-                        // ---------------------------------
+
                         res.writeHead(
                             200,
                             {
@@ -731,21 +1060,30 @@ lo pregunte específicamente.
                                     "application/json"
                             }
                         );
+
                         res.end(
                             JSON.stringify({
+
                                 success: true,
+
                                 reply: reply,
+
                                 memorySaved:
                                     memorySaved,
+
                                 memoriesDeleted:
                                     memoriesDeleted
+
                             })
                         );
+
                     } catch (error) {
+
                         console.error(
                             "ERROR ARIA:",
                             error
                         );
+
                         res.writeHead(
                             500,
                             {
@@ -753,21 +1091,25 @@ lo pregunte específicamente.
                                     "application/json"
                             }
                         );
+
                         res.end(
                             JSON.stringify({
+
                                 success: false,
+
                                 error:
                                     "Error comunicando con el modelo de IA"
+
                             })
                         );
                     }
+
                 }
             );
+
             return;
         }
-        // =================================================
-        // 404
-        // =================================================
+
         res.writeHead(
             404,
             {
@@ -775,26 +1117,33 @@ lo pregunte específicamente.
                     "application/json"
             }
         );
+
         res.end(
             JSON.stringify({
+
                 error:
                     "Ruta no encontrada"
+
             })
         );
+
     }
 );
-// =====================================================
-// INICIAR SERVIDOR
-// =====================================================
+
 async function startServer() {
+
     await initializeDatabase();
+
     server.listen(
         PORT,
         () => {
+
             console.log(
                 `ARIA backend funcionando en el puerto ${PORT}`
             );
+
         }
     );
 }
+
 startServer();
