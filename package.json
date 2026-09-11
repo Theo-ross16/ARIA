@@ -4,7 +4,7 @@
   "description": "Backend de ARIA",
   "main": "backend/server.js",
   "scripts": {
-    "start": "node backend/server.js"
+    "start": "node bachend/server.js"
   },
   "engines": {
     "node": "22.x"
