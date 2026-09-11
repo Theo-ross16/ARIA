@@ -1,12 +1,15 @@
 {
   "name": "aria-backend",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Backend de ARIA",
-  "main": "backend/server.js",
+  "main": "bachend/server.js",
   "scripts": {
     "start": "node bachend/server.js"
   },
   "engines": {
     "node": "22.x"
+  },
+  "dependencies": {
+    "openai": "^5.12.0"
   }
 }
