@@ -15,8 +15,16 @@ const pool = new Pool({
     }
 });
 
+/*
+=================================================
+BASE DE DATOS
+=================================================
+*/
+
 async function initializeDatabase() {
+
     try {
+
         await pool.query(`
             CREATE TABLE IF NOT EXISTS aria_memory (
                 id SERIAL PRIMARY KEY,
@@ -51,9 +59,12 @@ async function initializeDatabase() {
             );
         `);
 
-        console.log("Base de datos de ARIA inicializada.");
+        console.log(
+            "Base de datos de ARIA inicializada."
+        );
 
     } catch (error) {
+
         console.error(
             "Error inicializando base de datos:",
             error
@@ -61,8 +72,20 @@ async function initializeDatabase() {
     }
 }
 
-async function saveMemory(sessionId, role, content) {
+/*
+=================================================
+CONVERSACIÓN
+=================================================
+*/
+
+async function saveMemory(
+    sessionId,
+    role,
+    content
+) {
+
     try {
+
         await pool.query(
             `
             INSERT INTO aria_memory
@@ -77,6 +100,7 @@ async function saveMemory(sessionId, role, content) {
         );
 
     } catch (error) {
+
         console.error(
             "Error guardando conversación:",
             error
@@ -84,22 +108,28 @@ async function saveMemory(sessionId, role, content) {
     }
 }
 
-async function getMemory(sessionId) {
+async function getMemory(
+    sessionId
+) {
+
     try {
-        const result = await pool.query(
-            `
-            SELECT role, content
-            FROM aria_memory
-            WHERE session_id = $1
-            ORDER BY created_at ASC
-            LIMIT 50
-            `,
-            [sessionId]
-        );
+
+        const result =
+            await pool.query(
+                `
+                SELECT role, content
+                FROM aria_memory
+                WHERE session_id = $1
+                ORDER BY created_at ASC
+                LIMIT 50
+                `,
+                [sessionId]
+            );
 
         return result.rows;
 
     } catch (error) {
+
         console.error(
             "Error recuperando conversación:",
             error
@@ -109,37 +139,47 @@ async function getMemory(sessionId) {
     }
 }
 
+/*
+=================================================
+MEMORIAS ACTIVAS
+=================================================
+*/
+
 async function saveFact(
     sessionId,
     category,
     content,
     importance = 5
 ) {
+
     try {
-        const result = await pool.query(
-            `
-            INSERT INTO aria_facts
-            (
-                session_id,
-                category,
-                content,
-                importance,
-                updated_at
-            )
-            VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
-            RETURNING id
-            `,
-            [
-                sessionId,
-                category,
-                content,
-                importance
-            ]
-        );
+
+        const result =
+            await pool.query(
+                `
+                INSERT INTO aria_facts
+                (
+                    session_id,
+                    category,
+                    content,
+                    importance,
+                    updated_at
+                )
+                VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+                RETURNING id
+                `,
+                [
+                    sessionId,
+                    category,
+                    content,
+                    importance
+                ]
+            );
 
         return result.rows[0].id;
 
     } catch (error) {
+
         console.error(
             "Error guardando memoria estructurada:",
             error
@@ -149,28 +189,34 @@ async function saveFact(
     }
 }
 
-async function getFacts(sessionId) {
+async function getFacts(
+    sessionId
+) {
+
     try {
-        const result = await pool.query(
-            `
-            SELECT
-                id,
-                category,
-                content,
-                importance,
-                created_at,
-                updated_at
-            FROM aria_facts
-            WHERE session_id = $1
-            ORDER BY importance DESC, updated_at DESC
-            LIMIT 100
-            `,
-            [sessionId]
-        );
+
+        const result =
+            await pool.query(
+                `
+                SELECT
+                    id,
+                    category,
+                    content,
+                    importance,
+                    created_at,
+                    updated_at
+                FROM aria_facts
+                WHERE session_id = $1
+                ORDER BY importance DESC, updated_at DESC
+                LIMIT 100
+                `,
+                [sessionId]
+            );
 
         return result.rows;
 
     } catch (error) {
+
         console.error(
             "Error recuperando memorias:",
             error
@@ -182,7 +228,50 @@ async function getFacts(sessionId) {
 
 /*
 =================================================
-ARCHIVAR MEMORIA ANTES DE ELIMINARLA
+MEMORIAS ELIMINADAS
+=================================================
+*/
+
+async function getDeletedFacts(
+    sessionId
+) {
+
+    try {
+
+        const result =
+            await pool.query(
+                `
+                SELECT
+                    id,
+                    original_id,
+                    category,
+                    content,
+                    importance,
+                    deleted_at
+                FROM aria_deleted_facts
+                WHERE session_id = $1
+                ORDER BY deleted_at DESC
+                LIMIT 100
+                `,
+                [sessionId]
+            );
+
+        return result.rows;
+
+    } catch (error) {
+
+        console.error(
+            "Error recuperando papelera:",
+            error
+        );
+
+        return [];
+    }
+}
+
+/*
+=================================================
+ARCHIVAR MEMORIAS ANTES DE ELIMINAR
 =================================================
 */
 
@@ -190,53 +279,60 @@ async function archiveFactsByIds(
     sessionId,
     ids
 ) {
+
     try {
 
         if (
             !Array.isArray(ids) ||
             ids.length === 0
         ) {
+
             return 0;
         }
 
-        const cleanIds = ids
-            .map(id => Number(id))
-            .filter(
-                id =>
-                    Number.isInteger(id) &&
-                    id > 0
+        const cleanIds =
+            ids
+                .map(id => Number(id))
+                .filter(
+                    id =>
+                        Number.isInteger(id) &&
+                        id > 0
+                );
+
+        if (
+            cleanIds.length === 0
+        ) {
+
+            return 0;
+        }
+
+        const result =
+            await pool.query(
+                `
+                INSERT INTO aria_deleted_facts
+                (
+                    original_id,
+                    session_id,
+                    category,
+                    content,
+                    importance
+                )
+                SELECT
+                    id,
+                    session_id,
+                    category,
+                    content,
+                    importance
+                FROM aria_facts
+                WHERE session_id = $1
+                AND id = ANY($2::int[])
+                RETURNING id
+                `,
+                [
+                    sessionId,
+                    cleanIds
+                ]
             );
-
-        if (cleanIds.length === 0) {
-            return 0;
-        }
-
-        const result = await pool.query(
-            `
-            INSERT INTO aria_deleted_facts
-            (
-                original_id,
-                session_id,
-                category,
-                content,
-                importance
-            )
-            SELECT
-                id,
-                session_id,
-                category,
-                content,
-                importance
-            FROM aria_facts
-            WHERE session_id = $1
-            AND id = ANY($2::int[])
-            RETURNING id
-            `,
-            [
-                sessionId,
-                cleanIds
-            ]
-        );
 
         return result.rowCount;
 
@@ -261,30 +357,32 @@ async function deleteFactsByIds(
     sessionId,
     ids
 ) {
+
     try {
 
         if (
             !Array.isArray(ids) ||
             ids.length === 0
         ) {
+
             return 0;
         }
 
-        const cleanIds = ids
-            .map(id => Number(id))
-            .filter(
-                id =>
-                    Number.isInteger(id) &&
-                    id > 0
-            );
+        const cleanIds =
+            ids
+                .map(id => Number(id))
+                .filter(
+                    id =>
+                        Number.isInteger(id) &&
+                        id > 0
+                );
 
-        if (cleanIds.length === 0) {
+        if (
+            cleanIds.length === 0
+        ) {
+
             return 0;
         }
-
-        /*
-        Primero archivamos.
-        */
 
         const archived =
             await archiveFactsByIds(
@@ -292,14 +390,12 @@ async function deleteFactsByIds(
                 cleanIds
             );
 
-        if (archived === 0) {
+        if (
+            archived === 0
+        ) {
+
             return 0;
         }
-
-        /*
-        Después eliminamos de las
-        memorias activas.
-        */
 
         const result =
             await pool.query(
@@ -319,7 +415,7 @@ async function deleteFactsByIds(
     } catch (error) {
 
         console.error(
-            "Error eliminando memorias por ID:",
+            "Error eliminando memorias:",
             error
         );
 
@@ -329,37 +425,39 @@ async function deleteFactsByIds(
 
 /*
 =================================================
-ARCHIVAR TODAS LAS MEMORIAS
+ARCHIVAR TODAS
 =================================================
 */
 
 async function archiveAllFacts(
     sessionId
 ) {
+
     try {
 
-        const result = await pool.query(
-            `
-            INSERT INTO aria_deleted_facts
-            (
-                original_id,
-                session_id,
-                category,
-                content,
-                importance
-            )
-            SELECT
-                id,
-                session_id,
-                category,
-                content,
-                importance
-            FROM aria_facts
-            WHERE session_id = $1
-            RETURNING id
-            `,
-            [sessionId]
-        );
+        const result =
+            await pool.query(
+                `
+                INSERT INTO aria_deleted_facts
+                (
+                    original_id,
+                    session_id,
+                    category,
+                    content,
+                    importance
+                )
+                SELECT
+                    id,
+                    session_id,
+                    category,
+                    content,
+                    importance
+                FROM aria_facts
+                WHERE session_id = $1
+                RETURNING id
+                `,
+                [sessionId]
+            );
 
         return result.rowCount;
 
@@ -376,13 +474,14 @@ async function archiveAllFacts(
 
 /*
 =================================================
-ELIMINAR TODAS LAS MEMORIAS ACTIVAS
+ELIMINAR TODAS
 =================================================
 */
 
 async function deleteAllFacts(
     sessionId
 ) {
+
     try {
 
         const archived =
@@ -390,7 +489,10 @@ async function deleteAllFacts(
                 sessionId
             );
 
-        if (archived === 0) {
+        if (
+            archived === 0
+        ) {
+
             return 0;
         }
 
@@ -418,14 +520,117 @@ async function deleteAllFacts(
 
 /*
 =================================================
+RECUPERAR MEMORIA POR ID
+=================================================
+*/
+
+async function restoreDeletedFactById(
+    sessionId,
+    id
+) {
+
+    try {
+
+        const deleted =
+            await pool.query(
+                `
+                SELECT
+                    id,
+                    category,
+                    content,
+                    importance
+                FROM aria_deleted_facts
+                WHERE session_id = $1
+                AND id = $2
+                `,
+                [
+                    sessionId,
+                    Number(id)
+                ]
+            );
+
+        if (
+            deleted.rows.length === 0
+        ) {
+
+            return null;
+        }
+
+        const fact =
+            deleted.rows[0];
+
+        const restored =
+            await pool.query(
+                `
+                INSERT INTO aria_facts
+                (
+                    session_id,
+                    category,
+                    content,
+                    importance,
+                    updated_at
+                )
+                VALUES
+                (
+                    $1,
+                    $2,
+                    $3,
+                    $4,
+                    CURRENT_TIMESTAMP
+                )
+                RETURNING id
+                `,
+                [
+                    sessionId,
+                    fact.category,
+                    fact.content,
+                    fact.importance
+                ]
+            );
+
+        await pool.query(
+            `
+            DELETE FROM aria_deleted_facts
+            WHERE session_id = $1
+            AND id = $2
+            `,
+            [
+                sessionId,
+                Number(id)
+            ]
+        );
+
+        return {
+            restoredId:
+                restored.rows[0].id,
+
+            content:
+                fact.content
+        };
+
+    } catch (error) {
+
+        console.error(
+            "Error restaurando memoria:",
+            error
+        );
+
+        return null;
+    }
+}
+
+/*
+=================================================
 ANALIZADOR DE MEMORIA
 =================================================
 */
 
 async function analyzeMemoryCommand(
     message,
-    facts
+    facts,
+    deletedFacts
 ) {
+
     try {
 
         const memoryList =
@@ -438,10 +643,21 @@ async function analyzeMemoryCommand(
                     .join("\n")
                 : "NO HAY MEMORIAS PERMANENTES.";
 
+        const deletedMemoryList =
+            deletedFacts.length > 0
+                ? deletedFacts
+                    .map(
+                        fact =>
+                            `ID PAPELERA: ${fact.id} | Categoría: ${fact.category} | Contenido: ${fact.content}`
+                    )
+                    .join("\n")
+                : "NO HAY MEMORIAS ELIMINADAS.";
+
         const response =
             await client.responses.create({
 
-                model: "gpt-5.6-luna",
+                model:
+                    "gpt-5.6-luna",
 
                 instructions: `
 
@@ -452,78 +668,48 @@ Tu única tarea es determinar si el usuario quiere:
 1. GUARDAR una memoria.
 2. ELIMINAR una memoria.
 3. ELIMINAR TODAS las memorias.
-4. CONSULTAR qué memorias existen.
-5. NO HACER NADA.
+4. CONSULTAR memorias activas.
+5. CONSULTAR memorias eliminadas.
+6. RECUPERAR una memoria eliminada.
+7. NO HACER NADA.
 
 RESPONDE ÚNICAMENTE CON JSON VÁLIDO.
 
 FORMATO:
 
 {
-    "action": "save" | "delete" | "delete_all" | "list" | "none",
+    "action": "save" | "delete" | "delete_all" | "list" | "list_deleted" | "restore" | "none",
     "category": "fact" | "preference" | "project" | "instruction" | "context",
     "content": "texto breve",
     "importance": 1,
-    "deleteIds": []
+    "deleteIds": [],
+    "restoreIds": []
 }
 
-REGLAS PARA GUARDAR:
+=================================================
+GUARDAR
+=================================================
 
 Solo usa "save" si el usuario pide explícitamente
 recordar, guardar, almacenar o memorizar algo.
 
-Ejemplos:
+=================================================
+ELIMINAR
+=================================================
 
-"Recuerda que mi proyecto se llama ARIA."
+Usa "delete" si el usuario pide olvidar,
+borrar o eliminar una memoria concreta.
 
-"Guarda que prefiero respuestas cortas."
+Debes comparar el significado con las memorias
+existentes.
 
-"Quiero que recuerdes que trabajo en X."
+No es necesario que las palabras sean idénticas.
 
-REGLAS PARA ELIMINAR:
+=================================================
+ELIMINAR TODO
+=================================================
 
-Usa "delete" si el usuario pide explícitamente
-olvidar, borrar o eliminar una memoria concreta.
-
-Ejemplos:
-
-"Olvida mi nombre."
-
-"Olvida el nombre de mi proyecto."
-
-"Borra esa memoria."
-
-"No recuerdes que mi proyecto se llama FÉNIX."
-
-IMPORTANTE:
-
-Debes comparar la intención del usuario con las
-memorias existentes.
-
-NO es necesario que las palabras sean idénticas.
-
-Ejemplo:
-
-Memoria existente:
-
-ID: 25
-Categoría: project
-Contenido: Mi proyecto de prueba se llama FÉNIX.
-
-Usuario:
-
-"Olvida el nombre de mi proyecto de prueba."
-
-Debes devolver:
-
-{
-    "action": "delete",
-    "deleteIds": [25]
-}
-
-REGLAS PARA ELIMINAR TODO:
-
-Usa "delete_all" cuando el usuario diga claramente:
+Usa "delete_all" cuando diga claramente:
 
 "Olvida todo."
 
@@ -531,11 +717,11 @@ Usa "delete_all" cuando el usuario diga claramente:
 
 "Elimina todo lo que recuerdas de mí."
 
-"Quiero que olvides todo."
+=================================================
+CONSULTAR MEMORIAS
+=================================================
 
-REGLAS PARA CONSULTAR:
-
-Usa "list" cuando el usuario pregunte:
+Usa "list" cuando pregunte:
 
 "¿Qué recuerdas de mí?"
 
@@ -543,7 +729,59 @@ Usa "list" cuando el usuario pregunte:
 
 "¿Qué sabes de mí?"
 
-No conviertas una pregunta normal en una memoria.
+=================================================
+CONSULTAR MEMORIAS ELIMINADAS
+=================================================
+
+Usa "list_deleted" cuando pregunte:
+
+"¿Qué memorias eliminé?"
+
+"¿Qué tienes en la papelera?"
+
+"¿Qué memorias borré?"
+
+"¿Qué memorias eliminadas tienes?"
+
+=================================================
+RECUPERAR
+=================================================
+
+Usa "restore" cuando el usuario pida recuperar,
+restaurar o volver a recordar una memoria eliminada.
+
+Ejemplos:
+
+"Recupera la memoria de mi proyecto."
+
+"Restaura la memoria que eliminé."
+
+"Vuelve a recordar el nombre de mi proyecto."
+
+Debes comparar semánticamente la solicitud con
+las memorias eliminadas.
+
+Si encuentras una coincidencia:
+
+"restoreIds": [ID_PAPELERA]
+
+Si no encuentras una coincidencia:
+
+"restoreIds": []
+
+=================================================
+MEMORIAS ACTIVAS
+=================================================
+
+${memoryList}
+
+=================================================
+MEMORIAS ELIMINADAS
+=================================================
+
+${deletedMemoryList}
+
+=================================================
 
 Nunca guardes:
 
@@ -555,41 +793,59 @@ Nunca guardes:
 
 importance debe ser un número del 1 al 10.
 
-Si no existe ninguna memoria relacionada con una
-solicitud de eliminación concreta:
+Si action es "save":
+deleteIds debe ser [] y restoreIds debe ser [].
 
-"deleteIds": []
+Si action es "delete":
+restoreIds debe ser [].
 
-Si action es "save", deleteIds debe ser [].
+Si action es "restore":
+deleteIds debe ser [].
 
-Si action es "list", deleteIds debe ser [].
+Si action es "list":
+deleteIds debe ser [] y restoreIds debe ser [].
 
-Si action es "none", deleteIds debe ser [].
+Si action es "list_deleted":
+deleteIds debe ser [] y restoreIds debe ser [].
 
-MEMORIAS EXISTENTES:
-
-${memoryList}
+Si action es "none":
+deleteIds debe ser [] y restoreIds debe ser [].
 
                 `,
 
-                input: message
+                input:
+                    message
             });
 
         let text =
-            response.output_text || "{}";
+            response.output_text ||
+            "{}";
 
-        text = text
-            .replace(/```json/g, "")
-            .replace(/```/g, "")
-            .trim();
+        text =
+            text
+                .replace(/```json/g, "")
+                .replace(/```/g, "")
+                .trim();
 
         const command =
             JSON.parse(text);
 
         if (
-            !Array.isArray(command.deleteIds)
+            !Array.isArray(
+                command.deleteIds
+            )
         ) {
+
             command.deleteIds = [];
+        }
+
+        if (
+            !Array.isArray(
+                command.restoreIds
+            )
+        ) {
+
+            command.restoreIds = [];
         }
 
         return command;
@@ -603,7 +859,8 @@ ${memoryList}
 
         return {
             action: "none",
-            deleteIds: []
+            deleteIds: [],
+            restoreIds: []
         };
     }
 }
@@ -614,270 +871,396 @@ SERVIDOR
 =================================================
 */
 
-const server = http.createServer(
-    async (req, res) => {
+const server =
+    http.createServer(
+        async (req, res) => {
 
-        res.setHeader(
-            "Access-Control-Allow-Origin",
-            "*"
-        );
-
-        res.setHeader(
-            "Access-Control-Allow-Methods",
-            "GET, POST, OPTIONS"
-        );
-
-        res.setHeader(
-            "Access-Control-Allow-Headers",
-            "Content-Type"
-        );
-
-        if (
-            req.method === "OPTIONS"
-        ) {
-
-            res.writeHead(204);
-            res.end();
-
-            return;
-        }
-
-        if (
-            req.method === "GET" &&
-            req.url === "/"
-        ) {
-
-            res.writeHead(
-                200,
-                {
-                    "Content-Type":
-                        "application/json"
-                }
+            res.setHeader(
+                "Access-Control-Allow-Origin",
+                "*"
             );
 
-            res.end(
-                JSON.stringify({
-
-                    status: "online",
-
-                    assistant: "ARIA",
-
-                    version: "0.6",
-
-                    model:
-                        "gpt-5.6-luna",
-
-                    memory:
-                        "persistent + structured",
-
-                    memoryDelete:
-                        "enabled",
-
-                    memoryList:
-                        "enabled",
-
-                    memoryDeleteAll:
-                        "enabled",
-
-                    memoryRecovery:
-                        "archived"
-
-                })
+            res.setHeader(
+                "Access-Control-Allow-Methods",
+                "GET, POST, OPTIONS"
             );
 
-            return;
-        }
-
-        if (
-            req.method === "POST" &&
-            req.url === "/api/chat"
-        ) {
-
-            let body = "";
-
-            req.on(
-                "data",
-                chunk => {
-                    body += chunk;
-                }
+            res.setHeader(
+                "Access-Control-Allow-Headers",
+                "Content-Type"
             );
 
-            req.on(
-                "end",
-                async () => {
+            if (
+                req.method === "OPTIONS"
+            ) {
 
-                    try {
+                res.writeHead(204);
+                res.end();
 
-                        const data =
-                            JSON.parse(body);
+                return;
+            }
 
-                        const message =
-                            data.message || "";
+            if (
+                req.method === "GET" &&
+                req.url === "/"
+            ) {
 
-                        const sessionId =
-                            data.sessionId ||
-                            "default-user";
+                res.writeHead(
+                    200,
+                    {
+                        "Content-Type":
+                            "application/json"
+                    }
+                );
 
-                        if (
-                            !message.trim()
-                        ) {
+                res.end(
+                    JSON.stringify({
 
-                            res.writeHead(
-                                400,
-                                {
-                                    "Content-Type":
-                                        "application/json"
-                                }
-                            );
+                        status:
+                            "online",
 
-                            res.end(
-                                JSON.stringify({
+                        assistant:
+                            "ARIA",
 
-                                    success: false,
+                        version:
+                            "0.7",
 
-                                    error:
-                                        "Mensaje vacío"
+                        model:
+                            "gpt-5.6-luna",
 
-                                })
-                            );
+                        memory:
+                            "persistent + structured",
 
-                            return;
-                        }
+                        memoryDelete:
+                            "enabled",
 
-                        console.log(
-                            "Mensaje:",
-                            message
-                        );
+                        memoryList:
+                            "enabled",
 
-                        const existingFacts =
-                            await getFacts(
-                                sessionId
-                            );
+                        memoryDeleteAll:
+                            "enabled",
 
-                        const memoryCommand =
-                            await analyzeMemoryCommand(
-                                message,
-                                existingFacts
-                            );
+                        memoryRecovery:
+                            "enabled",
 
-                        console.log(
-                            "Comando de memoria:",
-                            memoryCommand
-                        );
+                        deletedMemoryArchive:
+                            "enabled"
 
-                        let memorySaved =
-                            false;
+                    })
+                );
 
-                        let memoriesDeleted =
-                            0;
+                return;
+            }
 
-                        let memoryAction =
-                            "none";
+            if (
+                req.method === "POST" &&
+                req.url === "/api/chat"
+            ) {
 
-                        if (
-                            memoryCommand.action ===
-                            "save"
-                        ) {
+                let body = "";
 
-                            const savedId =
-                                await saveFact(
-                                    sessionId,
+                req.on(
+                    "data",
+                    chunk => {
 
-                                    memoryCommand.category ||
-                                        "fact",
+                        body += chunk;
 
-                                    memoryCommand.content ||
-                                        message,
+                    }
+                );
 
-                                    memoryCommand.importance ||
-                                        5
+                req.on(
+                    "end",
+                    async () => {
+
+                        try {
+
+                            const data =
+                                JSON.parse(body);
+
+                            const message =
+                                data.message ||
+                                "";
+
+                            const sessionId =
+                                data.sessionId ||
+                                "default-user";
+
+                            if (
+                                !message.trim()
+                            ) {
+
+                                res.writeHead(
+                                    400,
+                                    {
+                                        "Content-Type":
+                                            "application/json"
+                                    }
                                 );
 
-                            memorySaved =
-                                savedId !== null;
+                                res.end(
+                                    JSON.stringify({
 
-                            memoryAction =
-                                "save";
+                                        success:
+                                            false,
 
-                            console.log(
-                                "Memoria guardada:",
-                                savedId
-                            );
-                        }
+                                        error:
+                                            "Mensaje vacío"
 
-                        if (
-                            memoryCommand.action ===
-                            "delete"
-                        ) {
-
-                            memoriesDeleted =
-                                await deleteFactsByIds(
-                                    sessionId,
-                                    memoryCommand.deleteIds
+                                    })
                                 );
 
-                            memoryAction =
-                                "delete";
+                                return;
+                            }
 
                             console.log(
-                                "IDs para eliminar:",
-                                memoryCommand.deleteIds
+                                "Mensaje:",
+                                message
                             );
 
-                            console.log(
-                                "Memorias archivadas y eliminadas:",
-                                memoriesDeleted
-                            );
-                        }
-
-                        if (
-                            memoryCommand.action ===
-                            "delete_all"
-                        ) {
-
-                            memoriesDeleted =
-                                await deleteAllFacts(
+                            const existingFacts =
+                                await getFacts(
                                     sessionId
                                 );
 
-                            memoryAction =
-                                "delete_all";
+                            const deletedFacts =
+                                await getDeletedFacts(
+                                    sessionId
+                                );
+
+                            const memoryCommand =
+                                await analyzeMemoryCommand(
+                                    message,
+                                    existingFacts,
+                                    deletedFacts
+                                );
 
                             console.log(
-                                "Memorias archivadas y eliminadas:",
-                                memoriesDeleted
-                            );
-                        }
-
-                        const facts =
-                            await getFacts(
-                                sessionId
+                                "Comando de memoria:",
+                                memoryCommand
                             );
 
-                        let memoryContext =
-                            "No hay memorias permanentes.";
+                            let memorySaved =
+                                false;
 
-                        if (
-                            facts.length > 0
-                        ) {
+                            let memoriesDeleted =
+                                0;
 
-                            memoryContext =
-                                facts
-                                    .map(
-                                        fact =>
-                                            `[ID ${fact.id}] [${fact.category}] ${fact.content}`
-                                    )
-                                    .join("\n");
-                        }
+                            let memoriesRestored =
+                                0;
 
-                        let memoryInstruction = "";
+                            let restoredContent =
+                                "";
 
-                        if (
-                            memoryCommand.action ===
-                            "list"
-                        ) {
+                            let memoryAction =
+                                "none";
 
-                            memoryInstruction = `
+                            /*
+                            =================================
+                            GUARDAR
+                            =================================
+                            */
+
+                            if (
+                                memoryCommand.action ===
+                                "save"
+                            ) {
+
+                                const savedId =
+                                    await saveFact(
+                                        sessionId,
+
+                                        memoryCommand.category ||
+                                            "fact",
+
+                                        memoryCommand.content ||
+                                            message,
+
+                                        memoryCommand.importance ||
+                                            5
+                                    );
+
+                                memorySaved =
+                                    savedId !== null;
+
+                                memoryAction =
+                                    "save";
+
+                                console.log(
+                                    "Memoria guardada:",
+                                    savedId
+                                );
+                            }
+
+                            /*
+                            =================================
+                            ELIMINAR
+                            =================================
+                            */
+
+                            if (
+                                memoryCommand.action ===
+                                "delete"
+                            ) {
+
+                                memoriesDeleted =
+                                    await deleteFactsByIds(
+                                        sessionId,
+                                        memoryCommand.deleteIds
+                                    );
+
+                                memoryAction =
+                                    "delete";
+
+                                console.log(
+                                    "IDs eliminados:",
+                                    memoryCommand.deleteIds
+                                );
+
+                                console.log(
+                                    "Memorias archivadas:",
+                                    memoriesDeleted
+                                );
+                            }
+
+                            /*
+                            =================================
+                            ELIMINAR TODO
+                            =================================
+                            */
+
+                            if (
+                                memoryCommand.action ===
+                                "delete_all"
+                            ) {
+
+                                memoriesDeleted =
+                                    await deleteAllFacts(
+                                        sessionId
+                                    );
+
+                                memoryAction =
+                                    "delete_all";
+
+                                console.log(
+                                    "Memorias archivadas y eliminadas:",
+                                    memoriesDeleted
+                                );
+                            }
+
+                            /*
+                            =================================
+                            RECUPERAR
+                            =================================
+                            */
+
+                            if (
+                                memoryCommand.action ===
+                                "restore"
+                            ) {
+
+                                memoryAction =
+                                    "restore";
+
+                                for (
+                                    const id
+                                    of memoryCommand.restoreIds
+                                ) {
+
+                                    const restored =
+                                        await restoreDeletedFactById(
+                                            sessionId,
+                                            id
+                                        );
+
+                                    if (
+                                        restored
+                                    ) {
+
+                                        memoriesRestored++;
+
+                                        restoredContent =
+                                            restored.content;
+
+                                        console.log(
+                                            "Memoria restaurada:",
+                                            restored
+                                        );
+                                    }
+                                }
+
+                                console.log(
+                                    "Memorias restauradas:",
+                                    memoriesRestored
+                                );
+                            }
+
+                            /*
+                            =================================
+                            MEMORIAS ACTUALES
+                            =================================
+                            */
+
+                            const facts =
+                                await getFacts(
+                                    sessionId
+                                );
+
+                            let memoryContext =
+                                "No hay memorias permanentes.";
+
+                            if (
+                                facts.length > 0
+                            ) {
+
+                                memoryContext =
+                                    facts
+                                        .map(
+                                            fact =>
+                                                `[ID ${fact.id}] [${fact.category}] ${fact.content}`
+                                        )
+                                        .join("\n");
+                            }
+
+                            /*
+                            =================================
+                            MEMORIAS ELIMINADAS
+                            =================================
+                            */
+
+                            const currentDeletedFacts =
+                                await getDeletedFacts(
+                                    sessionId
+                                );
+
+                            let deletedMemoryContext =
+                                "No hay memorias eliminadas.";
+
+                            if (
+                                currentDeletedFacts.length > 0
+                            ) {
+
+                                deletedMemoryContext =
+                                    currentDeletedFacts
+                                        .map(
+                                            fact =>
+                                                `[ID PAPELERA ${fact.id}] [${fact.category}] ${fact.content}`
+                                        )
+                                        .join("\n");
+                            }
+
+                            let memoryInstruction =
+                                "";
+
+                            /*
+                            LISTA DE MEMORIAS ACTIVAS
+                            */
+
+                            if (
+                                memoryCommand.action ===
+                                "list"
+                            ) {
+
+                                memoryInstruction = `
 
 El usuario está preguntando qué memorias
 permanentes tienes sobre él.
@@ -888,47 +1271,127 @@ ${memoryContext}
 
 Muéstralas de forma clara y natural.
 
-Si no existen memorias, dilo claramente.
+Si no existen memorias,
+dilo claramente.
 
 `;
-                        }
+                            }
 
-                        const conversation =
-                            await getMemory(
-                                sessionId
-                            );
+                            /*
+                            LISTA DE MEMORIAS ELIMINADAS
+                            */
 
-                        const conversationInput =
-                            conversation.map(
-                                item => ({
+                            if (
+                                memoryCommand.action ===
+                                "list_deleted"
+                            ) {
 
-                                    role:
-                                        item.role ===
-                                        "user"
-                                            ? "user"
-                                            : "assistant",
+                                memoryInstruction = `
 
-                                    content:
-                                        item.content
+El usuario está preguntando por las memorias
+que fueron eliminadas.
 
-                                })
-                            );
+Estas son las memorias archivadas:
 
-                        conversationInput.push({
+${deletedMemoryContext}
 
-                            role: "user",
+Muéstralas de forma clara y natural.
 
-                            content: message
+Si no existen memorias eliminadas,
+dilo claramente.
 
-                        });
+`;
+                            }
 
-                        const response =
-                            await client.responses.create({
+                            /*
+                            RESTAURACIÓN
+                            */
 
-                                model:
-                                    "gpt-5.6-luna",
+                            if (
+                                memoryCommand.action ===
+                                "restore"
+                            ) {
 
-                                instructions: `
+                                if (
+                                    memoriesRestored > 0
+                                ) {
+
+                                    memoryInstruction = `
+
+La memoria fue restaurada correctamente.
+
+Memoria restaurada:
+
+${restoredContent}
+
+Confirma al usuario de forma breve y natural
+que la memoria ha vuelto a estar activa.
+
+`;
+                                } else {
+
+                                    memoryInstruction = `
+
+El usuario solicitó recuperar una memoria,
+pero no se encontró una memoria eliminada
+relacionada con su solicitud.
+
+Indícalo claramente.
+
+`;
+                                }
+                            }
+
+                            /*
+                            =================================
+                            HISTORIAL
+                            =================================
+                            */
+
+                            const conversation =
+                                await getMemory(
+                                    sessionId
+                                );
+
+                            const conversationInput =
+                                conversation.map(
+                                    item => ({
+
+                                        role:
+                                            item.role ===
+                                            "user"
+                                                ? "user"
+                                                : "assistant",
+
+                                        content:
+                                            item.content
+
+                                    })
+                                );
+
+                            conversationInput.push({
+
+                                role:
+                                    "user",
+
+                                content:
+                                    message
+
+                            });
+
+                            /*
+                            =================================
+                            RESPUESTA ARIA
+                            =================================
+                            */
+
+                            const response =
+                                await client.responses.create({
+
+                                    model:
+                                        "gpt-5.6-luna",
+
+                                    instructions: `
 
 Eres ARIA, un asistente avanzado
 de inteligencia artificial.
@@ -945,16 +1408,14 @@ MEMORIA PERMANENTE ACTUAL
 
 ${memoryContext}
 
-Utiliza las memorias solamente cuando sean
-relevantes.
-
-Si no son relevantes, ignóralas.
+Utiliza estas memorias únicamente cuando
+sean relevantes.
 
 =================================================
-ESTADO DE LA OPERACIÓN DE MEMORIA
+ESTADO DE MEMORIA
 =================================================
 
-Acción detectada:
+Acción:
 
 ${memoryAction}
 
@@ -966,37 +1427,34 @@ Memorias eliminadas:
 
 ${memoriesDeleted}
 
+Memorias restauradas:
+
+${memoriesRestored}
+
 =================================================
-REGLAS DE MEMORIA
+REGLAS
 =================================================
 
-ARIA SÍ TIENE capacidad para gestionar memorias
-permanentes mediante el backend.
+ARIA tiene capacidad para gestionar
+memorias permanentes.
 
-Las memorias eliminadas se conservan en un archivo
-interno de recuperación.
+Las memorias eliminadas se conservan
+en un archivo de recuperación.
 
-No digas que una memoria fue destruida
-definitivamente cuando fue archivada.
+Si una memoria fue eliminada,
+no significa necesariamente que haya
+sido destruida definitivamente.
 
-No digas que no puedes eliminar memorias.
+Si una memoria fue restaurada correctamente,
+confirma que volvió a estar activa.
 
-Si se guardó una memoria correctamente,
-confirma brevemente que quedó guardada.
+Nunca inventes operaciones.
 
-Si se eliminó una o más memorias correctamente,
-confirma brevemente que fueron eliminadas.
+Nunca digas que una memoria fue restaurada
+si memoriesRestored es 0.
 
-Si se solicitó eliminar una memoria pero
-memoriesDeleted es 0, indica que no se encontró
-una memoria permanente relacionada.
-
-Si el usuario solicitó eliminar todo y se eliminaron
-memorias, confirma cuántas fueron eliminadas.
-
-Si no había memorias para eliminar, dilo claramente.
-
-Nunca inventes una operación de memoria.
+Nunca digas que no tienes capacidad
+para gestionar memorias.
 
 ${memoryInstruction}
 
@@ -1004,9 +1462,9 @@ ${memoryInstruction}
 SEGURIDAD
 =================================================
 
-No ejecutes acciones externas ni afirmes haberlas
-ejecutado si no existe una herramienta autorizada
-para hacerlo.
+No ejecutes acciones externas ni afirmes
+haberlas ejecutado si no existe una herramienta
+autorizada para hacerlo.
 
 Las acciones que puedan afectar sistemas,
 dispositivos, cuentas, archivos o servicios
@@ -1021,114 +1479,124 @@ CONVERSACIÓN
 
 Responde de manera natural y clara.
 
-No expliques el funcionamiento interno de PostgreSQL,
-el backend o el sistema de IDs salvo que el usuario
-lo pregunte específicamente.
+No expliques PostgreSQL, IDs o el backend
+salvo que el usuario lo pregunte específicamente.
 
-                                `,
+                                    `,
 
-                                input:
-                                    conversationInput
+                                    input:
+                                        conversationInput
 
-                            });
+                                });
 
-                        const reply =
-                            response.output_text ||
-                            "No pude generar una respuesta.";
+                            const reply =
+                                response.output_text ||
+                                "No pude generar una respuesta.";
 
-                        await saveMemory(
-                            sessionId,
-                            "user",
-                            message
-                        );
+                            await saveMemory(
+                                sessionId,
+                                "user",
+                                message
+                            );
 
-                        await saveMemory(
-                            sessionId,
-                            "assistant",
-                            reply
-                        );
+                            await saveMemory(
+                                sessionId,
+                                "assistant",
+                                reply
+                            );
 
-                        console.log(
-                            "Respuesta:",
-                            reply
-                        );
+                            console.log(
+                                "Respuesta:",
+                                reply
+                            );
 
-                        res.writeHead(
-                            200,
-                            {
-                                "Content-Type":
-                                    "application/json"
-                            }
-                        );
+                            res.writeHead(
+                                200,
+                                {
+                                    "Content-Type":
+                                        "application/json"
+                                }
+                            );
 
-                        res.end(
-                            JSON.stringify({
+                            res.end(
+                                JSON.stringify({
 
-                                success: true,
+                                    success:
+                                        true,
 
-                                reply: reply,
+                                    reply:
+                                        reply,
 
-                                memorySaved:
-                                    memorySaved,
+                                    memorySaved:
+                                        memorySaved,
 
-                                memoriesDeleted:
-                                    memoriesDeleted
+                                    memoriesDeleted:
+                                        memoriesDeleted,
 
-                            })
-                        );
+                                    memoriesRestored:
+                                        memoriesRestored
 
-                    } catch (error) {
+                                })
+                            );
 
-                        console.error(
-                            "ERROR ARIA:",
-                            error
-                        );
+                        } catch (error) {
 
-                        res.writeHead(
-                            500,
-                            {
-                                "Content-Type":
-                                    "application/json"
-                            }
-                        );
+                            console.error(
+                                "ERROR ARIA:",
+                                error
+                            );
 
-                        res.end(
-                            JSON.stringify({
+                            res.writeHead(
+                                500,
+                                {
+                                    "Content-Type":
+                                        "application/json"
+                                }
+                            );
 
-                                success: false,
+                            res.end(
+                                JSON.stringify({
 
-                                error:
-                                    "Error comunicando con el modelo de IA"
+                                    success:
+                                        false,
 
-                            })
-                        );
+                                    error:
+                                        "Error comunicando con el modelo de IA"
+
+                                })
+                            );
+                        }
+
                     }
+                );
 
+                return;
+            }
+
+            res.writeHead(
+                404,
+                {
+                    "Content-Type":
+                        "application/json"
                 }
             );
 
-            return;
+            res.end(
+                JSON.stringify({
+
+                    error:
+                        "Ruta no encontrada"
+
+                })
+            );
         }
+    );
 
-        res.writeHead(
-            404,
-            {
-                "Content-Type":
-                    "application/json"
-            }
-        );
-
-        res.end(
-            JSON.stringify({
-
-                error:
-                    "Ruta no encontrada"
-
-            })
-        );
-
-    }
-);
+/*
+=================================================
+INICIAR ARIA
+=================================================
+*/
 
 async function startServer() {
 
